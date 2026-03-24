@@ -15,7 +15,7 @@ class SpecialIDs:
 def mtp_dataset(inputs, special_ids, max_len, mask_ratio=0.15, ignore_idx=-100) :
     labels = np.full(max_len, ignore_idx, dtype=np.int64)
     non_padding_indices = np.where(inputs != special_ids.pad_id)[0]
-    non_padding_indices = non_padding_indices[:-1]
+    non_padding_indices = non_padding_indices[1:-1]
 
     if len(non_padding_indices) <= 1:
         return inputs, labels
@@ -38,7 +38,7 @@ def tpp_dataset(inputs, special_ids, ignore_idx=-100) :
     labels = np.copy(inputs)
     labels[inputs == special_ids.pad_id] = ignore_idx
     non_padding_indices = np.where(inputs != special_ids.pad_id)[0]
-    non_padding_indices = non_padding_indices[:-1]
+    non_padding_indices = non_padding_indices[1:-1]
 
     if len(non_padding_indices) <= 1:
         return inputs, labels
@@ -58,7 +58,7 @@ def tpp_dataset(inputs, special_ids, ignore_idx=-100) :
 
 def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5) :
     non_padding_indices = np.where(inputs != special_ids.pad_id)[0]
-    non_padding_indices = non_padding_indices[:-1]
+    non_padding_indices = non_padding_indices[1:-1]
     processed_inputs = np.copy(inputs)
 
     if len(non_padding_indices) <= 1:
@@ -90,7 +90,7 @@ def tov_dataset(inputs, special_ids, max_len, shuffle_prob=0.5) :
     
 
 class SubTaskDataset(Dataset) :
-    def __init__(self, df, domain_col='domain', label_col='label', max_len=77, mask_ratio=0.15, ignore_idx=-100, shuffle_prob = 0.5,
+    def __init__(self, df, domain_col='domain', label_col='label', max_len=77, mask_ratio=0.15, ignore_idx=-100, shuffle_prob=0.5,
                 tokenizer=None, special_ids=SpecialIDs, type='char'):
         self.df = df
         self.domain_col = domain_col
@@ -113,7 +113,7 @@ class SubTaskDataset(Dataset) :
 
             self.char2id = {char: idx for idx, char in enumerate(self.all_tokens)}
         self.tokenizer = tokenizer
-        if self.type == 'subword' and  self.tokenizer == None :
+        if self.type == 'subword' and self.tokenizer == None :
             raise ValueError("Tokenizer must be required.")
             
 
@@ -125,14 +125,16 @@ class SubTaskDataset(Dataset) :
         elif self.type == 'char' :
             token_indices = [self.char2id.get(c, self.unk_idx) for c in domain]
 
-        # zero padding
-        if len(token_indices) > self.max_len - 1:
-            token_indices = token_indices[:self.max_len - 1]
-            token_indices.append(self.sep_idx)
-        else:
-            token_indices.append(self.sep_idx)
-            token_indices += [self.pad_idx] * (self.max_len - len(token_indices))
-        return np.array(token_indices, dtype=np.int64)
+        # zero padding (right)
+        if len(token_indices) > self.max_len - 2:
+            token_indices = token_indices[:self.max_len - 2]
+
+        ids = [self.cls_idx] + token_indices + [self.sep_idx]
+
+        if len(ids) < self.max_len:
+            ids += [self.pad_idx] * (self.max_len - len(ids))
+
+        return np.array(ids, dtype=np.int64)
 
     def mtp(self, inputs) :
         return mtp_dataset(inputs, self.special_ids, self.max_len, self.mask_ratio, self.ignore_idx)

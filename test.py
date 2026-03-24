@@ -3,7 +3,6 @@ import polars as pl
 pl.Config.set_engine_affinity(engine="streaming")
 import numpy as np
 import torch
-import time
 from preprocessing import FineTuningDataset
 from transformers import AutoTokenizer
 from transformers import PreTrainedTokenizerFast
@@ -46,7 +45,7 @@ def compute_metrics(y_true, y_pred):
     return metrics
 
 
-def test_finetuning(model, device, test_dataloader):
+def test_finetuning(model, device, test_dataloader, use_bf16):
     model.eval()
     all_preds, all_labels = [], []
 
@@ -56,7 +55,9 @@ def test_finetuning(model, device, test_dataloader):
             X_char = X_char.to(device)
             y = y.to(device)
 
-            logits = model(X_token, X_char)
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=use_bf16):
+                logits = model(X_token, X_char)
+            
             preds = torch.argmax(logits, dim=1)
 
             all_preds.append(preds.cpu())
@@ -81,15 +82,14 @@ def test_by_year(cfg, args, model, tokenizer, device):
 
 
     for year in years:
-        if year in [24, 25]:
-            test_df = get_test_set_24() if year == 24 else get_test_set_25()
-        else:
-            test_df = (
-                get_test_set_20() if year == 20 else
-                get_test_set_21() if year == 21 else
-                get_test_set_22() if year == 22 else
-                get_test_set_23()
-            )
+        test_df = (
+            get_test_set_20() if year == 20 else
+            get_test_set_21() if year == 21 else
+            get_test_set_22() if year == 22 else
+            get_test_set_23() if year == 23 else
+            get_test_set_24() if year == 24 else
+            get_test_set_25()
+        )
 
         dataset = FineTuningDataset(
             test_df,
@@ -108,11 +108,9 @@ def test_by_year(cfg, args, model, tokenizer, device):
 
         test_loop = tqdm(dataloader, desc='[Test by year]', bar_format='{l_bar}{r_bar}', leave=False)
 
-        metrics, preds, labels = test_finetuning(
-            model, device, test_loop
-        )
+        metrics, preds, labels = test_finetuning(model, device, test_loop, args.use_bf16)
 
-        # ===== 출력 =====
+        # ===== print =====
         print(f"\nTesting data for 20{year}")
         print(
             f"Accuracy: {metrics['accuracy']:.4f}, "
@@ -162,7 +160,7 @@ def test_by_year(cfg, args, model, tokenizer, device):
     print("\n===== Year-wise Results =====")
     print(df)
 
-    # ---- Global metrics
+    # ---- Global metrics ----
     global_preds = torch.cat(global_preds)
     global_labels = torch.cat(global_labels)
 
@@ -198,6 +196,9 @@ def test_by_family(cfg, args, model, tokenizer, device):
     fpr_all = []
     fnr_all = []
 
+    global_preds = []
+    global_labels = []
+
     family_list = []
 
     paths = glob.glob(str(path_dga_scheme.joinpath('*.parquet')))
@@ -227,11 +228,7 @@ def test_by_family(cfg, args, model, tokenizer, device):
 
         test_loop = tqdm(dataloader, desc='[Test by family]', bar_format='{l_bar}{r_bar}', leave=False)
 
-        metrics, _, _ = test_finetuning(
-            model,
-            device,
-            test_loop
-        )
+        metrics, preds, labels = test_finetuning(model, device, test_loop, args.use_bf16)
 
         acc_all.append(metrics["accuracy"])
         pre_all.append(metrics["precision"])
@@ -240,7 +237,10 @@ def test_by_family(cfg, args, model, tokenizer, device):
         fpr_all.append(metrics["fpr"])
         fnr_all.append(metrics["fnr"])
 
-        # ===== 출력 =====
+        global_preds.append(preds)
+        global_labels.append(labels)
+
+        # ===== print =====
         print(f"\nTesting data for family: {family}")
         print(
             f"Accuracy: {metrics['accuracy']:.4f}, "
@@ -267,7 +267,7 @@ def test_by_family(cfg, args, model, tokenizer, device):
                 f"Family/{family}/FNR": metrics["fnr"],
             })
 
-    # ===== 결과 정리 =====
+    # ===== save results =====
     results_df = pl.DataFrame({
         "Family": family_list,
         "Accuracy": acc_all,
@@ -278,19 +278,46 @@ def test_by_family(cfg, args, model, tokenizer, device):
         "FNR": fnr_all
     })
 
-    print("\n===== Family-wise Results =====")
-    print(results_df)
-
     if args.save:
         save_path = path_figure.joinpath("test_by_family.csv")
         results_df.write_csv(save_path)
+
+    print("\n===== Family-wise Results =====")
+    print(results_df)
+
+    # ---- Global metrics ----
+    global_preds = torch.cat(global_preds)
+    global_labels = torch.cat(global_labels)
+
+    global_metrics = compute_metrics(global_labels, global_preds)
+    print("\n===== Overall Metrics =====")
+    print(
+        f"[Overall] "
+        f"Acc={global_metrics['accuracy']:.4f} | "
+        f"P={global_metrics['precision']:.4f} | "
+        f"R={global_metrics['recall']:.4f} | "
+        f"F1={global_metrics['f1']:.4f} | " 
+        f"FPR={global_metrics['fpr']:.4f} | "
+        f"FNR={global_metrics['fnr']:.4f}"
+    )
+
+    if args.use_wandb:
+        wandb.log({
+            "Global/Accuracy": global_metrics["accuracy"],
+            "Global/Precision": global_metrics["precision"],
+            "Global/Recall": global_metrics["recall"],
+            "Global/F1": global_metrics["f1"],
+            "Global/FPR": global_metrics["fpr"],
+            "Global/FNR": global_metrics["fnr"],
+        })
 
 
 def main() :
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True, help="Path to model checkpoint")
     parser.add_argument("--test_type", type=str, choices=["year", "family"], default="year", help="Test type")
-    parser.add_argument("--clf_norm", type=str, default='cls', choices=['cls', 'pool'])
+    parser.add_argument("--clf_norm", type=str, default='pool', choices=['cls', 'pool'])
+    parser.add_argument("--use_bf16", action="store_true", help="Use bf16")
     parser.add_argument("--save", type=bool, default=False, help="Save results")
     parser.add_argument("--project_name", type=str, default="proposal", help="Wandb project name")
     parser.add_argument("--run_name", type=str, default="run", help="Wandb run name")

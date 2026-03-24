@@ -54,32 +54,32 @@ class Transformer(nn.Module) :
 class MTPHead(nn.Module) :
     def __init__(self, d_model, vocab_size, dropout=0.1) :
         super().__init__()
-        self.dense = nn.Linear(d_model, d_model)
-        self.gelu = nn.GELU()
-        self.dropout = nn.Dropout(dropout)
+        # self.dense = nn.Linear(d_model, d_model)
+        # self.gelu = nn.GELU()
+        # self.dropout = nn.Dropout(dropout)
         self.linear = nn.Linear(d_model, vocab_size)
         
     def forward(self, x) :
 
-        x = self.dense(x)
-        x = self.gelu(x)
-        x = self.dropout(x)
+        # x = self.dense(x)
+        # x = self.gelu(x)
+        # x = self.dropout(x)
         logtis = self.linear(x)
         return logtis
     
 class TPPHead(nn.Module) :
     def __init__(self, d_model, vocab_size, dropout=0.1) :
         super().__init__()
-        self.dense = nn.Linear(d_model, d_model)
-        self.gelu = nn.GELU()
-        self.dropout = nn.Dropout(dropout)
+        # self.dense = nn.Linear(d_model, d_model)
+        # self.gelu = nn.GELU()
+        # self.dropout = nn.Dropout(dropout)
         self.linear = nn.Linear(d_model, vocab_size)
         
     def forward(self, x) :
 
-        x = self.dense(x)
-        x = self.gelu(x)
-        x = self.dropout(x)
+        # x = self.dense(x)
+        # x = self.gelu(x)
+        # x = self.dropout(x)
         logtis = self.linear(x)
         return logtis
     
@@ -88,14 +88,14 @@ class TOVHead(nn.Module):
         super().__init__()
         self.tov_norm = tov_norm
         if tov_norm == "pool" :
-            self.dense = nn.Linear(d_model * 2, d_model * 2)
-            self.gelu = nn.GELU()
-            self.dropout = nn.Dropout(dropout)
+            # self.dense = nn.Linear(d_model * 2, d_model * 2)
+            # self.gelu = nn.GELU()
+            # self.dropout = nn.Dropout(dropout)
             self.classifier = nn.Linear(d_model * 2, num_classes)
         else :
-            self.dense = nn.Linear(d_model, d_model)
-            self.gelu = nn.GELU()
-            self.dropout = nn.Dropout(dropout)
+            # self.dense = nn.Linear(d_model, d_model)
+            # self.gelu = nn.GELU()
+            # self.dropout = nn.Dropout(dropout)
             self.classifier = nn.Linear(d_model, num_classes)
         
     def forward(self, sequence_output, padding_mask=None):
@@ -115,10 +115,10 @@ class TOVHead(nn.Module):
         else :
             output = sequence_output[:, 0, :]
         
-        x = self.dense(output)
-        x = self.gelu(x)
-        x = self.dropout(x)
-        logits = self.classifier(x)
+        # x = self.dense(output)
+        # x = self.gelu(x)
+        # x = self.dropout(x)
+        logits = self.classifier(output)
         return logits
     
 class PretrainedModel(nn.Module) :
@@ -186,7 +186,8 @@ class FinetuningHead(nn.Module) :
 
     def forward(self, encoder_output) :
 
-        x = self.dense1(encoder_output)
+        x = self.dropout(encoder_output)
+        x = self.dense1(x)
         x = torch.relu(x)
         x = self.dropout(x)
 
@@ -195,7 +196,7 @@ class FinetuningHead(nn.Module) :
     
 class FineTuningModel(nn.Module):
     def __init__(self, pretrain_model_t=None, pretrain_model_c=None,
-                 dropout=0.1, padding_idx=0, clf_norm = 'pool', freeze_backbone=False):
+                 dropout=0.1, padding_idx=0, clf_norm='pool', freeze_backbone=False):
         super().__init__()
 
         self.padding_idx = padding_idx
@@ -279,9 +280,6 @@ class FineTuningModel(nn.Module):
             c_mask = self.create_padding_mask(input_ids_c)
             c_out = self.transformer_encoder_c(c_x, mask=c_mask)
 
-            # print(f"c_x shape: {c_x.shape}") # 예상: [128, 77, 256]
-            # print(f"c_mask shape: {c_mask.shape}") # 예상: [128, 77]
-
             if self.clf_norm == 'pool':
                 # Max pool + Mean pool (d_model * 2)
                 valid_mask = (~c_mask).float().unsqueeze(-1)
@@ -299,12 +297,6 @@ class FineTuningModel(nn.Module):
             features.append(c_feat)
 
         combined_output = torch.cat(features, dim=1) if len(features) > 1 else features[0]
-
-        # # 디버깅용 출력 (한 번만 확인하고 지우셔도 됩니다)
-        # if not hasattr(self, '_size_checked'):
-        #     print(f"DEBUG: Combined output shape: {combined_output.shape}")
-        #     print(f"DEBUG: Head input_dim: {self.classifier_head.dense1.in_features}")
-        #     self._size_checked = True
 
         return self.classifier_head(combined_output)
     

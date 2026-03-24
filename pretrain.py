@@ -5,14 +5,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from preprocessing import SubTaskDataset, SpecialIDs
+from preprocessing import SubTaskDataset
 from transformers import AutoTokenizer
 from transformers import PreTrainedTokenizerFast
 from model import PretrainedModel
 from tqdm import tqdm
 import datetime
 import wandb
-from utility.dataset import get_train_set_pretrain, get_train_set, get_val_set, get_train_17, get_train_18, get_train_19, get_train_20, get_train_21, get_train_22, get_train_23, get_val_17, get_val_18, get_val_19, get_val_20, get_val_21, get_val_22, get_val_23
+from utility.dataset import get_train_set, get_val_set
 from utility.config import PretrainConfig
 from utility.path import path_model, path_tokenizer
 
@@ -32,35 +32,14 @@ def train_char(cfg, args) :
     if args.use_wandb:
         run = wandb.init(project=args.project_name, name=args.run_name, config=vars(cfg), tags=['valid'])
 
-    # train_df = get_train_set_pretrain()
-    if args.train_data_type == "17":
-        train_df = get_train_17()
-        val_df = get_val_17()
-    elif args.train_data_type == "18":
-        train_df = get_train_18()
-        val_df = get_val_18()
-    elif args.train_data_type == "19":
-        train_df = get_train_19()
-        val_df = get_val_19()
-    elif args.train_data_type == "20":
-        train_df = get_train_20()
-        val_df = get_val_20()
-    elif args.train_data_type == "21":
-        train_df = get_train_21()
-        val_df = get_val_21()
-    elif args.train_data_type == "22":
-        train_df = get_train_22()
-        val_df = get_val_22()
-    elif args.train_data_type == "23":
-        train_df = get_train_23()
-        val_df = get_val_23()
-
+    train_df = get_train_set()
+    val_df = get_val_set()
 
     train_dataset = SubTaskDataset(
         train_df,
         max_len=cfg.max_len_char,
         mask_ratio=cfg.mask_ratio,
-        type = 'char'
+        type='char'
     )
     
     train_dataloader = DataLoader(
@@ -75,7 +54,7 @@ def train_char(cfg, args) :
         val_df,
         max_len=cfg.max_len_char,
         mask_ratio=cfg.mask_ratio,
-        type = 'char'
+        type='char'
     )
 
     val_dataloader = DataLoader(
@@ -126,25 +105,26 @@ def train_char(cfg, args) :
             X_tpp, Y_tpp = X_tpp.to(device), Y_tpp.to(device)
             X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
 
-            # --- T1: MTP Loss 계산 ---
-            logits_mtp = model(X_mtp, task_type='MTP')
-            loss_mtp = ce(
-                logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
-                Y_mtp.view(-1)                            # (B*L)
-            )
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=args.use_bf16):
+                # --- T1: MTP Loss 계산 ---
+                logits_mtp = model(X_mtp, task_type='MTP')
+                loss_mtp = ce(
+                    logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
+                    Y_mtp.view(-1)                            # (B*L)
+                )
 
-            # --- T2: TPP Loss 계산 ---
-            logits_tpp = model(X_tpp, task_type='TPP')
-            loss_tpp = ce(
-                logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
-                Y_tpp.view(-1)                             # (B*L)
-            )
+                # --- T2: TPP Loss 계산 ---
+                logits_tpp = model(X_tpp, task_type='TPP')
+                loss_tpp = ce(
+                    logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
+                    Y_tpp.view(-1)                             # (B*L)
+                )
 
-            # --- T3: TOV Loss 계산 ---
-            logits_tov = model(X_tov, task_type='TOV')
-            loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
+                # --- T3: TOV Loss 계산 ---
+                logits_tov = model(X_tov, task_type='TOV')
+                loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
 
-            L_total = loss_mtp + loss_tpp + loss_tov
+                L_total = loss_mtp + loss_tpp + loss_tov
 
             optimizer.zero_grad()
             L_total.backward()
@@ -162,20 +142,21 @@ def train_char(cfg, args) :
             interval_loss_sum_tpp += loss_tpp.item()
             interval_loss_sum_tov += loss_tov.item()
             
-            # 인터벌 로깅
+            # interval logging
             if global_step % args.log_interval == 0:
                 avg_total_interval = interval_loss_sum_total / args.log_interval
                 avg_mtp_interval = interval_loss_sum_mtp / args.log_interval
                 avg_tpp_interval = interval_loss_sum_tpp / args.log_interval
                 avg_tov_interval = interval_loss_sum_tov / args.log_interval
                 
+                # logging step starts from 1
                 if args.use_wandb:
                     wandb.log({
                         "step/interval_total_loss": avg_total_interval,
                         "step/interval_mtp_loss": avg_mtp_interval,
                         "step/interval_tpp_loss": avg_tpp_interval,
                         "step/interval_tov_loss": avg_tov_interval,
-                    }, step=global_step//args.log_interval -1)
+                    }, step=global_step//args.log_interval)
 
                 interval_loss_sum_total = 0 
                 interval_loss_sum_mtp = 0
@@ -191,7 +172,7 @@ def train_char(cfg, args) :
 
             if global_step % args.val_check_interval == 0:
                 val_loss = validate(model, val_dataloader, device, cfg, args, global_step)
-                train_loop.write(f"[subword] step {global_step} val_loss={val_loss:.4f}")
+                train_loop.write(f"[char] step {global_step} val_loss={val_loss:.4f}")
 
                 if val_loss < best_loss:
                     best_loss = val_loss
@@ -229,35 +210,15 @@ def train_subword(cfg, args) :
     else :
         tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both.json")))
 
-    # train_df = get_train_set_pretrain()
-    if args.train_data_type == "17":
-        train_df = get_train_17()
-        val_df = get_val_17()
-    elif args.train_data_type == "18":
-        train_df = get_train_18()
-        val_df = get_val_18()
-    elif args.train_data_type == "19":
-        train_df = get_train_19()
-        val_df = get_val_19()
-    elif args.train_data_type == "20":
-        train_df = get_train_20()
-        val_df = get_val_20()
-    elif args.train_data_type == "21":
-        train_df = get_train_21()
-        val_df = get_val_21()
-    elif args.train_data_type == "22":
-        train_df = get_train_22()
-        val_df = get_val_22()
-    elif args.train_data_type == "23":
-        train_df = get_train_23()
-        val_df = get_val_23()
+    train_df = get_train_set()
+    val_df = get_val_set()
 
     train_dataset = SubTaskDataset(
         train_df,
         max_len=cfg.max_len_subword,
         tokenizer=tokenizer,
         mask_ratio=cfg.mask_ratio,
-        type = 'subword'
+        type='subword'
     )
     
     train_dataloader = DataLoader(
@@ -273,7 +234,7 @@ def train_subword(cfg, args) :
         max_len=cfg.max_len_subword,
         tokenizer=tokenizer,
         mask_ratio=cfg.mask_ratio,
-        type = 'subword'
+        type='subword'
     )
 
     val_dataloader = DataLoader(
@@ -324,25 +285,26 @@ def train_subword(cfg, args) :
             X_tpp, Y_tpp = X_tpp.to(device), Y_tpp.to(device)
             X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
 
-            # --- T1: MTP Loss 계산 ---
-            logits_mtp = model(X_mtp, task_type='MTP')
-            loss_mtp = ce(
-                logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
-                Y_mtp.view(-1)                            # (B*L)
-            )
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=args.use_bf16):
+                # --- T1: MTP Loss 계산 ---
+                logits_mtp = model(X_mtp, task_type='MTP')
+                loss_mtp = ce(
+                    logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
+                    Y_mtp.view(-1)                            # (B*L)
+                )
 
-            # --- T2: TPP Loss 계산 ---
-            logits_tpp = model(X_tpp, task_type='TPP')
-            loss_tpp = ce(
-                logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
-                Y_tpp.view(-1)                             # (B*L)
-            )
+                # --- T2: TPP Loss 계산 ---
+                logits_tpp = model(X_tpp, task_type='TPP')
+                loss_tpp = ce(
+                    logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
+                    Y_tpp.view(-1)                             # (B*L)
+                )
 
-            # --- T3: TOV Loss 계산 ---
-            logits_tov = model(X_tov, task_type='TOV')
-            loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
+                # --- T3: TOV Loss 계산 ---
+                logits_tov = model(X_tov, task_type='TOV')
+                loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
 
-            L_total = loss_mtp + loss_tpp + loss_tov
+                L_total = loss_mtp + loss_tpp + loss_tov
 
             optimizer.zero_grad()
             L_total.backward()
@@ -367,13 +329,14 @@ def train_subword(cfg, args) :
                 avg_tpp_interval = interval_loss_sum_tpp / args.log_interval
                 avg_tov_interval = interval_loss_sum_tov / args.log_interval
                 
+                # logging step starts from 1
                 if args.use_wandb:
                     wandb.log({
                         "step/interval_total_loss": avg_total_interval,
                         "step/interval_mtp_loss": avg_mtp_interval,
                         "step/interval_tpp_loss": avg_tpp_interval,
                         "step/interval_tov_loss": avg_tov_interval,
-                    }, step=global_step//args.log_interval -1)
+                    }, step=global_step//args.log_interval)
 
                 train_loop.write(f"[Step {global_step} Interval Log]: Train Loss: {avg_total_interval:.4f}")
 
@@ -428,25 +391,26 @@ def validate(model, dataloader, device, cfg, args, global_step):
             X_tpp, Y_tpp = X_tpp.to(device), Y_tpp.to(device)
             X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
 
-            # --- T1: MTP Loss 계산 ---
-            logits_mtp = model(X_mtp, task_type='MTP')
-            loss_mtp = ce(
-                logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
-                Y_mtp.view(-1)                            # (B*L)
-            )
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=args.use_bf16):
+                # --- T1: MTP Loss 계산 ---
+                logits_mtp = model(X_mtp, task_type='MTP')
+                loss_mtp = ce(
+                    logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
+                    Y_mtp.view(-1)                            # (B*L)
+                )
 
-            # --- T2: TPP Loss 계산 ---
-            logits_tpp = model(X_tpp, task_type='TPP')
-            loss_tpp = ce(
-                logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
-                Y_tpp.view(-1)                             # (B*L)
-            )
+                # --- T2: TPP Loss 계산 ---
+                logits_tpp = model(X_tpp, task_type='TPP')
+                loss_tpp = ce(
+                    logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
+                    Y_tpp.view(-1)                             # (B*L)
+                )
 
-            # --- T3: TOV Loss 계산 ---
-            logits_tov = model(X_tov, task_type='TOV')
-            loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
+                # --- T3: TOV Loss 계산 ---
+                logits_tov = model(X_tov, task_type='TOV')
+                loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
 
-            L_total = loss_mtp + loss_tpp + loss_tov
+                L_total = loss_mtp + loss_tpp + loss_tov
 
             total_loss += L_total.item()
             mtp_loss_total += loss_mtp.item()
@@ -488,8 +452,7 @@ def main() :
    parser.add_argument("--use_bert_pretokenizer", type=bool, default=False, help="Use BERT pretokenizer")
    parser.add_argument("--tokenizer_min_freq", type=int, default=0, help="Tokenizer min frequency")
    parser.add_argument("--tokenizer_vocab_size", type=int, default=30522, help="Tokenizer vocab size")
-   parser.add_argument("--train_data_type", type=str, default="17", help="Training data type")
-
+   parser.add_argument("--use_bf16", action="store_true", help="Use bf16")
    args = parser.parse_args()
    args.use_wandb = not args.no_wandb
 

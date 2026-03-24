@@ -1,4 +1,3 @@
-import pandas as pd
 import polars as pl
 pl.Config.set_engine_affinity(engine="streaming")
 import torch
@@ -10,8 +9,6 @@ from transformers import AutoTokenizer
 from transformers import PreTrainedTokenizerFast
 from model import PretrainedModel, FineTuningModel
 from tqdm import tqdm
-import time
-import datetime
 import wandb
 from sklearn.metrics import precision_score, recall_score, f1_score
 from utility import dataset
@@ -31,59 +28,52 @@ def load_pretrain_weights(pt_model, weigths_path, device) :
     pt_model.load_state_dict(weights_to_load, strict=False)
     return pt_model
 
-def fine_tune_dga_classifier(pt_model_t, pt_model_c,
-                             train_dataloader, val_dataloader, weights_path_t, weights_path_c,
-                             device, num_epochs, log_interval_steps, save_path,
-                             use_token=True, use_char=True, freeze_backbone=True,
-                             unfreeze_at_epoch=0.5, clf_norm='cls',
-                             learning_rate=1e-4, backbone_lr=1e-6,):
+def fine_tune_dga_classifier(pt_model_t, pt_model_c, train_dataloader, val_dataloader, device, save_path, args):
 
-    pt_t = load_pretrain_weights(pt_model_t, weights_path_t, device) if use_token else None
-    pt_c = load_pretrain_weights(pt_model_c, weights_path_c, device) if use_char else None
+    pt_t = load_pretrain_weights(pt_model_t, args.token_weights_path, device) if args.use_token else None
+    pt_c = load_pretrain_weights(pt_model_c, args.char_weights_path, device) if args.use_char else None
     
     ft_model = FineTuningModel(
         pretrain_model_t=pt_t, 
         pretrain_model_c=pt_c, 
-        freeze_backbone=freeze_backbone,
-        clf_norm=clf_norm # or 'cls' method
+        freeze_backbone=args.freeze_backbone,
+        clf_norm=args.clf_norm
     ).to(device)
 
     param_groups = [
         {
             'params': ft_model.classifier_head.parameters(), 
-            'lr': learning_rate # 로깅 시 index가 0인 것이 로깅되기 때문에 헤드 파라미터를 먼저 append해주어야함
+            'lr': args.learning_rate
         }
     ]
     
     if ft_model.use_token:
         param_groups.extend([
-            {'params': ft_model.transformer_encoder_t.parameters(), 'lr': backbone_lr},
-            {'params': ft_model.embedding_t.parameters(), 'lr': backbone_lr},
-            {'params': ft_model.positional_encoding_t.parameters(), 'lr': backbone_lr}
+            {'params': p.parameters(), 'lr': args.backbone_lr} 
+            for p in [ft_model.transformer_encoder_t, ft_model.embedding_t, ft_model.positional_encoding_t]
         ])
     if ft_model.use_char:
         param_groups.extend([
-            {'params': ft_model.transformer_encoder_c.parameters(), 'lr': backbone_lr},
-            {'params': ft_model.embedding_c.parameters(), 'lr': backbone_lr},
-            {'params': ft_model.positional_encoding_c.parameters(), 'lr': backbone_lr}
+            {'params': p.parameters(), 'lr': args.backbone_lr} 
+            for p in [ft_model.transformer_encoder_c, ft_model.embedding_c, ft_model.positional_encoding_c]
         ])
 
     optimizer = optim.Adam(param_groups)
     criterion = nn.CrossEntropyLoss()
 
-    if freeze_backbone:
-        unfreeze_step = int(len(train_dataloader) * unfreeze_at_epoch) if unfreeze_at_epoch is not None else float('inf')
-        backbone_unfrozen = False # 추후 백본 해제 시 True로 변경됨
-    else: # freeze_backbone=False 이면 full finetuning하므로
+    if args.freeze_backbone:
+        unfreeze_step = int(len(train_dataloader) * args.unfreeze_at_epoch) if args.unfreeze_at_epoch is not None else float('inf')
+        backbone_unfrozen = False
+    else: # full finetuning
         unfreeze_step = None
         backbone_unfrozen = True
-    best_val_loss = float('inf')
-    global_step = 0 # 전체 스텝 카운터
-    
-    interval_loss_sum_total = 0 # 로깅 인터벌 동안의 손실 누적합
-    interval_batch_counter = 0 # 로깅 인터벌 동안의 배치 카운터
 
-    for epoch in range(num_epochs) :
+    best_val_loss = float('inf')
+    global_step = 0    
+    interval_loss_sum_total = 0
+    interval_batch_counter = 0
+
+    for epoch in range(args.num_epochs) :
         ft_model.train()
         total_loss = 0
         train_loop = tqdm(train_dataloader, desc=f'FineTune Epoch {epoch+1}', 
@@ -93,20 +83,21 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
         for X_token, X_char, y_train in train_loop :
             global_step += 1
 
-            if freeze_backbone and not backbone_unfrozen and global_step >= unfreeze_step:
-                ft_model.set_backbone_freezing(freeze=False) # 모든 파라미터 해제
+            if args.freeze_backbone and not backbone_unfrozen and global_step >= unfreeze_step:
+                ft_model.set_backbone_freezing(freeze=False)
                 backbone_unfrozen = True
                 print(f"--- [Step {global_step}] Backbone Unfrozen. Momentum Preserved. ---")
 
             X_token, X_char, y_train = X_token.to(device), X_char.to(device), y_train.to(device)
             optimizer.zero_grad()
 
-            logits = ft_model(
-                X_token if use_token else None, 
-                X_char if use_char else None
-            )
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=args.use_bf16):
+                logits = ft_model(
+                    X_token if args.use_token else None, 
+                    X_char if args.use_char else None
+                )
+                loss = criterion(logits, y_train)
             
-            loss = criterion(logits, y_train)
             loss.backward()
             optimizer.step()
 
@@ -117,14 +108,14 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
             interval_loss_sum_total += loss.item()
             interval_batch_counter += 1
 
-            if interval_batch_counter == log_interval_steps :
+            if interval_batch_counter == args.log_interval_steps :
 
                 avg_total_interval_loss = interval_loss_sum_total / interval_batch_counter
 
 
-                if global_step % 10000 == 0 :
+                if global_step % args.log_interval_steps == 0 :
 
-                    avg_val_loss, val_acc, val_precision, val_recall, val_f1 = evaluate_finetuning(ft_model, val_dataloader, device)
+                    avg_val_loss, val_acc, val_precision, val_recall, val_f1 = evaluate_finetuning(ft_model, val_dataloader, device, args.use_bf16)
 
                     wandb.log({
                         'train/loss' : avg_total_interval_loss,
@@ -156,7 +147,7 @@ def fine_tune_dga_classifier(pt_model_t, pt_model_c,
 
             train_loop.set_postfix(avg_loss=f'{avg_total:.4f}', refresh=False)
 
-def evaluate_finetuning(model, dataloader, device):
+def evaluate_finetuning(model, dataloader, device, use_bf16):
     model.eval()
     criterion = nn.CrossEntropyLoss()
     total_loss = 0
@@ -172,12 +163,13 @@ def evaluate_finetuning(model, dataloader, device):
         for X_token, X_char, y_val in val_loop:
             X_token, X_char, y_val = X_token.to(device), X_char.to(device), y_val.to(device)
             
-            logits = model(
-                X_token if model.use_token else None, 
-                X_char if model.use_char else None
-            )
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=use_bf16):
+                logits = model(
+                    X_token if model.use_token else None, 
+                    X_char if model.use_char else None
+                )
+                loss = criterion(logits, y_val)
             
-            loss = criterion(logits, y_val)
             total_loss += loss.item()
 
             predicted_labels = torch.argmax(logits, dim=1)
@@ -208,7 +200,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Fine-tuning DGA Classifier")
 
-    # 경로
+    # path
     parser.add_argument("--tokenizer_path", type=str, default=cfg.tokenizer_path)
     parser.add_argument("--use_bert_pretokenizer", type=bool, default=False)
     parser.add_argument("--project_name", type=str, default=cfg.project_name)
@@ -216,7 +208,7 @@ def main():
     parser.add_argument("--wandb_mode", type=str, default=cfg.wandb_mode)
     parser.add_argument("--timestamp", type=str, default=cfg.timestamp)
 
-    # 모델 구조 관련
+    # model
     parser.add_argument("--d_model", type=int, default=cfg.d_model)
     parser.add_argument("--nhead", type=int, default=cfg.nhead)
     parser.add_argument("--dim_feedforward", type=int, default=cfg.dim_feedforward)
@@ -225,7 +217,7 @@ def main():
     parser.add_argument("--max_len_char", type=int, default=cfg.max_len_char)
     parser.add_argument("--vocab_size_char", type=int, default=cfg.vocab_size_char)
 
-    # 학습 하이퍼파라미터
+    # hyperparameter
     parser.add_argument("--batch_size", type=int, default=cfg.batch_size)
     parser.add_argument("--num_workers", type=int, default=cfg.num_workers)
     parser.add_argument("--num_epochs", type=int, default=cfg.num_epochs)
@@ -233,21 +225,26 @@ def main():
     parser.add_argument("--backbone_lr", type=float, default=cfg.backbone_lr)
     parser.add_argument("--log_interval_steps", type=int, default=cfg.log_interval_steps)
 
-    # 플래그
+    # flag
     parser.add_argument("--use_token", default=cfg.use_token)
     parser.add_argument("--use_char", default=cfg.use_char)
     parser.add_argument("--freeze_backbone", default=cfg.freeze_backbone)
+    parser.add_argument("--unfreeze_at_epoch", type=float, default=0.5)
     parser.add_argument("--clf_norm", type=str, default=cfg.clf_norm, choices=['cls', 'pool'])
-
-    # 가중치
+    parser.add_argument("--use_bf16", action="store_true", help="Use bf16")
+    
+    # weight path
     parser.add_argument("--token_weights_path", type=str, default=cfg.token_weights_path)
     parser.add_argument("--char_weights_path", type=str, default=cfg.char_weights_path)
 
     args = parser.parse_args()
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # weight path
+    args.token_weights_path = path_model.joinpath(args.token_weights_path)
+    args.char_weights_path = path_model.joinpath(args.char_weights_path)
 
-    # 토크나이저 & 경로 & 완디비
+    # tokenizer & path & wandb
     if args.use_bert_pretokenizer :
         tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', use_fast=True)
     else :
@@ -264,7 +261,7 @@ def main():
     wandb.define_metric("train/*", step_metric="global_step")
     wandb.define_metric("val/*", step_metric="global_step")
 
-    # 데이터셋
+    # dataset
     train_df = dataset.get_train_set()
     val_df = dataset.get_val_set()
 
@@ -285,24 +282,15 @@ def main():
                                  n_heads=args.nhead, dim_feedforward=args.dim_feedforward, 
                                  num_layers=args.num_layers, max_len=args.max_len_char)
     
-    # 학습 실행
+    # train
     fine_tune_dga_classifier(
         pt_model_t,
         pt_model_c,
         train_dataloader,
         val_dataloader,
-        weights_path_t=path_model.joinpath(args.token_weights_path),
-        weights_path_c=path_model.joinpath(args.char_weights_path),
         device=device,
-        num_epochs=args.num_epochs,
-        log_interval_steps=args.log_interval_steps,
         save_path=best_model_path,
-        use_token=args.use_token,
-        use_char=args.use_char,
-        freeze_backbone=args.freeze_backbone,
-        clf_norm=args.clf_norm,
-        learning_rate=args.learning_rate,
-        backbone_lr=args.backbone_lr
+        args=args
     )
     
     if best_model_path.exists():
