@@ -16,20 +16,14 @@ class TokenEmbedding(nn.Module):
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len):
         super().__init__()
-        P_E = torch.zeros(max_len, d_model)
-        pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        _2i = torch.arange(0, d_model, step= 2, dtype=torch.float)
-        div_term = torch.exp(_2i * (-math.log(10000.0) / d_model)) 
+        self.pos_embed = nn.Embedding(max_len, d_model)
+        torch.nn.init.xavier_normal_(self.pos_embed.weight)
 
-        P_E[:, 0::2] = torch.sin(pos * div_term)
-        P_E[:, 1::2] = torch.cos(pos * div_term)
-
-        self.register_buffer('pe', P_E.unsqueeze(0))
-        
-    def forward(self, x) :
-        seq_len = x.size(1)
-        pe_slice = self.pe[:, :seq_len, :]
-        return x + pe_slice
+    def forward(self, x):
+        B, L, _ = x.size()
+        device = x.device
+        pos_ids = torch.arange(L, device=device).unsqueeze(0).expand(B, L)
+        return x + self.pos_embed(pos_ids)
 
 class Transformer(nn.Module) :
     def __init__(self, d_model, n_heads, dim_feedforward, num_layers, dropout=0.1) :
@@ -41,7 +35,7 @@ class Transformer(nn.Module) :
             dropout=dropout,
             batch_first=True
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers, enable_nested_tensor=False)
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers)
         self.dropout = nn.Dropout(dropout)   
 
     def forward(self, x, mask=None) :
