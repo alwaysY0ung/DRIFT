@@ -220,7 +220,7 @@ def train_subword(cfg, args) :
                 vocab_size=cfg.vocab_size_subword,
                 min_freq=cfg.min_freq_subword,
                 use_bert_pretokenizer=True,
-                tokenizer_path=tokenizer_path)
+                save_path=str(tokenizer_path))
         tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path))
         print(f"Loaded Tokenizer Vocab Size: {tokenizer.vocab_size}")
         assert tokenizer.vocab_size == cfg.vocab_size_subword, "Tokenizer vocab size does not match!"

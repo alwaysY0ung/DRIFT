@@ -1,6 +1,5 @@
 import polars as pl
-import argparse
-import glob
+import gc
 from pathlib import Path
 from utility.config import PretrainConfig
 from tokenizers import (
@@ -25,13 +24,16 @@ def get_corpus_batches(file_paths, column="domain", batch_size=10000):
 
     for i in range(0, total_rows, batch_size):
         yield df_unique[column].slice(i, batch_size).to_list()
+    
+    del df_unique
+    gc.collect()
 
 def train(file_paths: list[str],
         text_col: str,
         vocab_size: int,
         min_freq: int,
         max_len: int,
-        tokenizer_path: str | Path = "artifacts/tokenizer/tokenizer-{min_freq}-{vocab_size}.json",
+        save_path: str | Path = "artifacts/tokenizer/tokenizer-{min_freq}-{vocab_size}.json",
         use_bert_pretokenizer: bool = False,
     ) -> Tokenizer:
 
@@ -62,7 +64,6 @@ def train(file_paths: list[str],
         ],
     )
 
-    save_path = f"tokenizer-{min_freq}-{vocab_size}.json"
     tokenizer.save(save_path)
 
 if __name__ == "__main__":
