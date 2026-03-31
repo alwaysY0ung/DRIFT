@@ -32,7 +32,6 @@ def train(file_paths: list[str],
         text_col: str,
         vocab_size: int,
         min_freq: int,
-        max_len: int,
         save_path: str | Path = "artifacts/tokenizer/tokenizer-{min_freq}-{vocab_size}.json",
         use_bert_pretokenizer: bool = False,
     ) -> Tokenizer:
