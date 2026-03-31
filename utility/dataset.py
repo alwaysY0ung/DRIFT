@@ -18,7 +18,7 @@ def get_train_set():
         'dataset/period_data_no_underscore/T19_dga_train.parquet',
         ]
 
-    return pl.read_parquet(files).unique()
+    return pl.read_parquet(files).unique(), files
 
 def get_val_set():
     files = [

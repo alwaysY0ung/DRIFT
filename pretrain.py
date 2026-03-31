@@ -15,6 +15,7 @@ import wandb
 from utility.dataset import get_train_set, get_val_set
 from utility.config import PretrainConfig
 from utility.path import path_model, path_tokenizer
+from make_tokenizer import train
 
 
 def log_artifact(run, path, name, type_="model"):
@@ -32,7 +33,7 @@ def train_char(cfg, args) :
     if args.use_wandb:
         run = wandb.init(project=args.project_name, name=args.run_name, config=vars(cfg), tags=['valid'])
 
-    train_df = get_train_set()
+    train_df, _  = get_train_set()
     val_df = get_val_set()
 
     train_dataset = SubTaskDataset(
@@ -209,9 +210,22 @@ def train_subword(cfg, args) :
     if cfg.use_bert_pretokenizer :
         tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', use_fast=True)
     else :
-        tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both.json")))
+        # tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both.json")))
+        tokenizer_path = path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both.json")
+        if not tokenizer_path.exists():
+            print("Make Tokenizer")
+            _, paths = get_train_set()
+            train(file_paths=paths,
+                text_col="domain",
+                vocab_size=cfg.vocab_size_subword,
+                min_freq=cfg.min_freq_subword,
+                use_bert_pretokenizer=True,
+                tokenizer_path=tokenizer_path)
+        tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_path))
+        print(f"Loaded Tokenizer Vocab Size: {tokenizer.vocab_size}")
+        assert tokenizer.vocab_size == cfg.vocab_size_subword, "Tokenizer vocab size does not match!"
 
-    train_df = get_train_set()
+    train_df, _  = get_train_set()
     val_df = get_val_set()
 
     train_dataset = SubTaskDataset(

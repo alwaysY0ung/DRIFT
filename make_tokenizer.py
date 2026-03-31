@@ -26,7 +26,7 @@ def get_corpus_batches(file_paths, column="domain", batch_size=10000):
     for i in range(0, total_rows, batch_size):
         yield df_unique[column].slice(i, batch_size).to_list()
 
-def train(df: pl.DataFrame,
+def train(file_paths: list[str],
         text_col: str,
         vocab_size: int,
         min_freq: int,
@@ -35,7 +35,7 @@ def train(df: pl.DataFrame,
         use_bert_pretokenizer: bool = False,
     ) -> Tokenizer:
 
-    corpus_iter = get_corpus_batches(files)
+    corpus_iter = get_corpus_batches(file_paths)
     tokenizer = Tokenizer(models.WordPiece(unk_token="[UNK]"))
     tokenizer.normalizer = normalizers.Sequence([
         normalizers.NFD(),
@@ -78,4 +78,4 @@ if __name__ == "__main__":
     vocab = cfg.vocab_size_subword
     minfreq = cfg.min_freq_subword
 
-    train(vocab, minfreq)
+    train(files,vocab, minfreq)
