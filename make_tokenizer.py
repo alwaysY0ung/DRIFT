@@ -13,8 +13,8 @@ from tokenizers import (
 
 def get_corpus_batches(file_paths, column="domain", batch_size=10000):
     """
-    Parquet 파일들을 Lazy하게 스캔하여 중복을 제거한 후,
-    Tokenizer 학습을 위해 배치 단위로 yield 합니다."""
+    Scan Parquet files lazily and yield batches for tokenizer training.
+    """
 
     q = pl.scan_parquet(file_paths)
     q = q.select(column).unique().drop_nulls()
@@ -32,7 +32,7 @@ def train(file_paths: list[str],
         text_col: str,
         vocab_size: int,
         min_freq: int,
-        save_path: str | Path = "artifacts/tokenizer/tokenizer-{min_freq}-{vocab_size}.json",
+        save_path: str | Path = "artifacts/tokenizer/tokenizer-{min_freq}-{vocab_size}-both.json",
         use_bert_pretokenizer: bool = False,
     ) -> Tokenizer:
 

@@ -2,9 +2,12 @@ from pathlib import Path
 
 path_dir_root = Path(__file__).parent.parent
 
-path_period_data = path_dir_root.joinpath('dataset/period_data_no_underscore')
-path_dga_scheme = path_dir_root.joinpath('dataset/dga_scheme')
-assert path_period_data.exists(), 'period_data_no_underscore does not exist'
+path_data = path_dir_root.joinpath('dataset')
+path_data.mkdir(exist_ok=True, parents=True)
+
+path_period_data = path_data.joinpath('period_data')
+path_dga_scheme = path_data.joinpath('dga_scheme')
+assert path_period_data.exists(), 'period_data does not exist'
 
 path_tokenizer = path_dir_root.joinpath('artifacts/tokenizer')
 path_tokenizer.mkdir(exist_ok=True, parents=True)

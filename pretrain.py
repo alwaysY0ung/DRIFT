@@ -107,21 +107,21 @@ def train_char(cfg, args) :
             X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
 
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=args.use_bf16):
-                # --- T1: MTP Loss 계산 ---
+                # --- T1: MTP Loss ---
                 logits_mtp = model(X_mtp, task_type='MTP')
                 loss_mtp = ce(
                     logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
                     Y_mtp.view(-1)                            # (B*L)
                 )
 
-                # --- T2: TPP Loss 계산 ---
+                # --- T2: TPP Loss ---
                 logits_tpp = model(X_tpp, task_type='TPP')
                 loss_tpp = ce(
                     logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
                     Y_tpp.view(-1)                             # (B*L)
                 )
 
-                # --- T3: TOV Loss 계산 ---
+                # --- T3: TOV Loss ---
                 logits_tov = model(X_tov, task_type='TOV')
                 loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
 
@@ -210,7 +210,6 @@ def train_subword(cfg, args) :
     if cfg.use_bert_pretokenizer :
         tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', use_fast=True)
     else :
-        # tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both.json")))
         tokenizer_path = path_tokenizer.joinpath(f"tokenizer-{cfg.min_freq_subword}-{cfg.vocab_size_subword}-both.json")
         if not tokenizer_path.exists():
             print("Make Tokenizer")
@@ -301,21 +300,21 @@ def train_subword(cfg, args) :
             X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
 
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=args.use_bf16):
-                # --- T1: MTP Loss 계산 ---
+                # --- T1: MTP Loss ---
                 logits_mtp = model(X_mtp, task_type='MTP')
                 loss_mtp = ce(
                     logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
                     Y_mtp.view(-1)                            # (B*L)
                 )
 
-                # --- T2: TPP Loss 계산 ---
+                # --- T2: TPP Loss ---
                 logits_tpp = model(X_tpp, task_type='TPP')
                 loss_tpp = ce(
                     logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
                     Y_tpp.view(-1)                             # (B*L)
                 )
 
-                # --- T3: TOV Loss 계산 ---
+                # --- T3: TOV Loss ---
                 logits_tov = model(X_tov, task_type='TOV')
                 loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
 
@@ -338,7 +337,7 @@ def train_subword(cfg, args) :
             interval_loss_sum_tpp += loss_tpp.item()
             interval_loss_sum_tov += loss_tov.item()
             
-            # 인터벌 로깅
+            # interval logging
             if global_step % args.log_interval == 0:
                 avg_total_interval = interval_loss_sum_total / args.log_interval
                 avg_mtp_interval = interval_loss_sum_mtp / args.log_interval
@@ -408,21 +407,21 @@ def validate(model, dataloader, device, cfg, args, global_step):
             X_tov, Y_tov = X_tov.to(device), Y_tov.to(device)
 
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=args.use_bf16):
-                # --- T1: MTP Loss 계산 ---
+                # --- T1: MTP Loss ---
                 logits_mtp = model(X_mtp, task_type='MTP')
                 loss_mtp = ce(
                     logits_mtp.view(-1, logits_mtp.size(-1)), # (B*L, V)
                     Y_mtp.view(-1)                            # (B*L)
                 )
 
-                # --- T2: TPP Loss 계산 ---
+                # --- T2: TPP Loss ---
                 logits_tpp = model(X_tpp, task_type='TPP')
                 loss_tpp = ce(
                     logits_tpp.view(-1, logits_tpp.size(-1)), # (B*L, L)
                     Y_tpp.view(-1)                             # (B*L)
                 )
 
-                # --- T3: TOV Loss 계산 ---
+                # --- T3: TOV Loss ---
                 logits_tov = model(X_tov, task_type='TOV')
                 loss_tov = bce(logits_tov, Y_tov) # Logits: (B x 2), Labels: (B)
 

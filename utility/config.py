@@ -39,16 +39,10 @@ class PretrainConfig:
     save_path: str = "pretrained.pt"
 
 
-def get_wandb_mode():
-    # VS Code에서 Run 버튼으로 실행된 경우
-    if "VSCODE_PID" in os.environ:
-        return "disabled"
-    return "online"
-
 @dataclass
 class FinetuningConfig:
-    token_weights_path: str = '1224_1609_subword_step_2046000.pt'
-    char_weights_path: str = '1226_1655_char_step_3098000.pt'
+    token_weights_path: str = 'SUBWORD_BACKBONE.pt'
+    char_weights_path: str = 'CHAR_BACKBONE.pt'
     tokenizer_path: str = "tokenizer-0-30522-both.json"
 
     d_model: int = 256

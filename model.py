@@ -7,7 +7,6 @@ class TokenEmbedding(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=padding_idx)
 
-        # 초기화
         torch.nn.init.xavier_normal_(self.embedding.weight)
 
     def forward(self, input) :
@@ -161,7 +160,7 @@ class PretrainedModel(nn.Module) :
         if task_type == 'TOV' or task_type == 'ALL':
             outputs['tov_logits'] = self.tov_head(encoder_output, padding_mask=padding_mask)
 
-        # 단일 태스크를 요구했을 경우 dict 대신 로짓 텐서 자체를 반환
+        # if only one task is required, return only the logits
         if len(outputs) == 1 and task_type != 'ALL':
             return list(outputs.values())[0]
             
@@ -206,7 +205,6 @@ class FineTuningModel(nn.Module):
         total_input_dim = dim_per_path * num_active_paths
 
         # --- Token Path Components ---
-        # load_pretrain(pretrain_model_t)
         if self.use_token:
             self.transformer_encoder_t = pretrain_model_t.transformer
             self.embedding_t = pretrain_model_t.embedding
@@ -217,7 +215,6 @@ class FineTuningModel(nn.Module):
                 self._set_grad(self.positional_encoding_t, False)
 
         # --- Character Path Components ---
-        # load_pretrain(pretrain_model_c)
         if self.use_char:
             self.transformer_encoder_c = pretrain_model_c.transformer
             self.embedding_c = pretrain_model_c.embedding
@@ -227,7 +224,7 @@ class FineTuningModel(nn.Module):
                 self._set_grad(self.embedding_c, False)
                 self._set_grad(self.positional_encoding_c, False)
         
-        # DGA 분류 헤드 연결
+        # DGA classification head
         self.classifier_head = FinetuningHead(
             input_dim=total_input_dim,
             d_model=d_model,
@@ -244,7 +241,7 @@ class FineTuningModel(nn.Module):
     def forward(self, input_ids_t=None, input_ids_c=None):
         features = []
 
-        # --- 1. Token Path (X_t) 처리 ---
+        # --- 1. Token Path (X_t) processing ---
         if self.use_token and input_ids_t is not None:
             t_embed = self.embedding_t(input_ids_t)
             t_x = self.positional_encoding_t(t_embed)
@@ -267,7 +264,7 @@ class FineTuningModel(nn.Module):
                 t_feat = t_out[:, 0, :]
             features.append(t_feat)
 
-        # --- 2. Character Path (X_c) 처리 ---
+        # --- 2. Character Path (X_c) processing ---
         if self.use_char and input_ids_c is not None:
             c_embed = self.embedding_c(input_ids_c)
             c_x = self.positional_encoding_c(c_embed)
@@ -295,7 +292,7 @@ class FineTuningModel(nn.Module):
         return self.classifier_head(combined_output)
     
     def set_backbone_freezing(self, freeze=True):
-        """Backbone의 학습 여부를 외부에서 조절하는 함수"""
+        """Set the training status of the backbone."""
         trainable = not freeze
         
         if self.use_token:
@@ -308,5 +305,5 @@ class FineTuningModel(nn.Module):
             for p in self.embedding_c.parameters(): p.requires_grad = trainable
             for p in self.positional_encoding_c.parameters(): p.requires_grad = trainable
             
-        status = "고정(Frozen)" if freeze else "해제(Unfrozen)"
-        print(f"--- Backbone이 {status} 상태로 변경되었습니다. ---")
+        status = "Frozen" if freeze else "Unfrozen"
+        print(f"--- Backbone is {status}. ---")

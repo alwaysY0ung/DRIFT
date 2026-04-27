@@ -20,7 +20,7 @@ def mtp_dataset(inputs, special_ids, max_len, mask_ratio=0.15, ignore_idx=-100) 
     if len(non_padding_indices) <= 1:
         return inputs, labels
     
-    # 마스크할 토큰 개수(최소 1개)
+    # Number of tokens to mask (at least 1)
     num_mask = max(1, int(len(non_padding_indices) * mask_ratio))
 
     masked_indices = random.sample(non_padding_indices.tolist(), num_mask)
@@ -152,17 +152,17 @@ class SubTaskDataset(Dataset) :
         domain, _ = self.df.row(idx)
         X_ori = self.domain_to_token(domain)
 
-        # 1. MTP 데이터 생성
+        # 1. MTP data generation
         X_mtp, Y_mtp = self.mtp(X_ori)
         
-        # 2. TPP 데이터 생성
+        # 2. TPP data generation
         X_tpp, Y_tpp = self.tpp(X_ori)
         
-        # 3. TOV 데이터 생성
+        # 3. TOV data generation
         X_tov, Y_tov = self.tov(X_ori)
         
 
-        # 최종 반환: 6개의 텐서를 튜플로 묶어 반환
+        # Return 6 tensors as a tuple
         return (torch.tensor(X_mtp, dtype=torch.long), 
                 torch.tensor(Y_mtp, dtype=torch.long),
                 torch.tensor(X_tpp, dtype=torch.long), 
@@ -233,33 +233,3 @@ class FineTuningDataset(Dataset) :
         X_char = self.domain_to_ids(domain)
         y = np.int64(label)
         return torch.tensor(X_token, dtype=torch.long), torch.tensor(X_char, dtype=torch.long), torch.tensor(y, dtype=torch.long)
-
-if __name__ == '__main__':
-
-    from transformers import AutoTokenizer
-    import polars as pl
-
-    df = pl.DataFrame({'domain': ['a'], 'label': [1]})
-
-    tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased', use_fast=True)
-    dataset = SubTaskDataset(df, tokenizer=tokenizer, max_len=30, type='subword')
-
-    X_mtp, Y_mtp, X_tpp, Y_tpp, X_tov, Y_tov = dataset[0]
-
-    print(f"\n도메인 원본: {df.row(0)[0]}")
-    print(f"전처리된 X: {X_mtp.shape}")
-    print(f"X MTP(앞 20개): {X_mtp[:20].tolist()}")
-    print(f"X TPP(앞 20개): {X_tpp[:20].tolist()}")
-    print(f'X TOV(앞 20개): {X_tov[:20].tolist()}')
-    print(f'Y MTP(앞 20개): {Y_mtp[:20].tolist()}')
-
-    dataset = FineTuningDataset(df, tokenizer=tokenizer)
-
-    X_token, X_char, y = dataset[0]
-
-    print("도메인 원본:", df.row(0)[0])
-    print("전처리된 X (길이, 토큰):", X_token.shape) 
-    print("전처리된 X (앞 20개, 토큰):", X_token[:20].tolist())
-    print("전처리된 X (길이, 문자):", X_char.shape) 
-    print("전처리된 X (앞 20개, 문자):", X_char[:20].tolist())
-    print("라벨 y:", y.item())

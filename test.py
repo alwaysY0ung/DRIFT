@@ -142,7 +142,7 @@ def test_by_year(cfg, args, model, tokenizer, device):
         global_preds.append(preds)
         global_labels.append(labels)
 
-    # ---- Save year-wise results
+    # ---- Save year-wise results ---
     df = pl.DataFrame({
         "Year": year_str,
         "Accuracy": acc_all,
